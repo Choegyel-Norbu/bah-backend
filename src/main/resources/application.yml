@@ -1,0 +1,142 @@
+spring:
+  application:
+    name: AttireHub
+
+  # Disable Docker Compose auto-start (run MySQL/Redis locally)
+  docker:
+    compose:
+      enabled: false
+
+  # ==================== Multipart File Upload ====================
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 10MB
+      max-request-size: 10MB
+      file-size-threshold: 2KB
+
+  # ==================== Datasource ====================
+  datasource:
+    url: jdbc:mysql://localhost:3306/attirehub?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: root
+    password: ChogyalWp
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+
+  # ==================== JPA / Hibernate ====================
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.MySQLDialect
+        type:
+          preferred_enum_jdbc_type: VARCHAR
+        jdbc:
+          batch_size: 20
+        order_inserts: true
+        order_updates: true
+    open-in-view: false
+
+  # ==================== Flyway ====================
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+
+  # ==================== Redis ====================
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 2000ms
+
+  # ==================== Jackson ====================
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: non_null
+
+  # ==================== Mail ====================
+  # Defaults are empty (log-only mode). Override via application-local.yml or env vars.
+  mail:
+    host: ${MAIL_HOST:}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+        debug: ${MAIL_DEBUG:false}
+    test-connection: false
+
+# ==================== Server ====================
+# Use 8081 by default to avoid conflict when 8080 is in use; set SERVER_PORT=8080 to use 8080
+server:
+  port: ${SERVER_PORT:8081}
+
+# ==================== JWT ====================
+app:
+  jwt:
+    secret: ${JWT_SECRET:YXR0aXJlaHViLXNlY3JldC1rZXktZm9yLWp3dC1hdXRoZW50aWNhdGlvbi0yMDI2LXByb2R1Y3Rpb24tcmVhZHk=}
+    # 2 years in milliseconds (~2 * 365 days)
+    access-token-expiration: 63072000000
+    refresh-token-expiration: 63072000000
+
+  # Frontend base URL for verification/reset links in emails
+  frontend-base-url: ${FRONTEND_BASE_URL:http://localhost:3001}
+
+  # Email verification token validity (24 hours)
+  verification-token-expiration-hours: 24
+
+  # Password reset token validity (1 hour)
+  password-reset-token-expiration-hours: 1
+
+  # ==================== Cache (Redis) ====================
+  cache:
+    enabled: true
+    # Set to true to log CACHE HIT/MISS/PUT at DEBUG (verify data is served from Redis)
+    log-hits-and-misses: false
+    key-prefix: "attirehub:"
+    default-ttl: 15m
+    ttls:
+      product-detail: 15m
+      product-variants: 15m
+      product-related: 30m
+      product-trending: 30m
+      categories: 1h
+
+  # ==================== File Storage (validation only) ====================
+  file-storage:
+    allowed-types: image/jpeg,image/png,image/gif,image/webp
+    max-file-size: 10485760
+
+# ==================== UploadThing ====================
+uploadthing:
+  token: ${UPLOADTHING_TOKEN:}
+  script:
+    upload: scripts/uploadthing-upload.js
+    delete: scripts/uploadthing-delete.js
+    timeout: 60
+
+# ==================== Logging ====================
+logging:
+  level:
+    root: INFO
+    com.attirehub: DEBUG
+    org.springframework.security: INFO
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql: TRACE
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

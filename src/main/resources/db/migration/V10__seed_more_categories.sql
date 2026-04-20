@@ -1,0 +1,22 @@
+-- Add 20 more categories (parent_id references existing categories from V9: 1=Women, 2=Men, 3=Kids, 4=Accessories, 5=Dresses, 6=Tops, 7=Pants, 8=Shirts, 9=Shoes, 10=Bags)
+INSERT INTO categories (name, slug, description, parent_id, display_order, is_active) VALUES
+('Skirts', 'womens-skirts', 'Skirts and midi skirts', 1, 2, TRUE),
+('Sweaters & Knitwear', 'womens-sweaters', 'Sweaters, cardigans, and knitwear', 1, 3, TRUE),
+('Activewear', 'womens-activewear', 'Sports and active wear', 1, 4, TRUE),
+('Swimwear', 'womens-swimwear', 'Swimwear and beachwear', 1, 5, TRUE),
+('Jackets & Coats', 'mens-jackets', 'Jackets, coats, and blazers', 2, 2, TRUE),
+('Shorts', 'mens-shorts', 'Casual and sport shorts', 2, 3, TRUE),
+('Men''s Activewear', 'mens-activewear', 'Sports and gym wear', 2, 4, TRUE),
+('Boys', 'kids-boys', 'Clothing for boys', 3, 0, TRUE),
+('Girls', 'kids-girls', 'Clothing for girls', 3, 1, TRUE),
+('Baby', 'kids-baby', 'Baby and toddler wear', 3, 2, TRUE),
+('Jewelry', 'jewelry', 'Necklaces, earrings, and bracelets', 4, 2, TRUE),
+('Watches', 'watches', 'Watches and smartwatches', 4, 3, TRUE),
+('Hats & Caps', 'hats-caps', 'Hats, caps, and beanies', 4, 4, TRUE),
+('Belts', 'belts', 'Belts and waistbands', 4, 5, TRUE),
+('Sunglasses', 'sunglasses', 'Sunglasses and eyewear', 4, 6, TRUE),
+('Casual Dresses', 'casual-dresses', 'Everyday and casual dresses', 5, 0, TRUE),
+('Evening Dresses', 'evening-dresses', 'Formal and evening wear', 5, 1, TRUE),
+('Formal Shirts', 'formal-shirts', 'Dress shirts and formal wear', 8, 0, TRUE),
+('Sneakers', 'sneakers', 'Casual and sport sneakers', 9, 0, TRUE),
+('Boots', 'boots', 'Boots and ankle boots', 9, 1, TRUE);

@@ -1,0 +1,20 @@
+spring:
+  # Production overrides - Aiven MySQL
+  # Actual credentials should be provided via environment variables in production.
+  datasource:
+    url: ${AIVEN_DB_URL:jdbc:mysql://attirehub-db-1a615821-attirehub-9248.f.aivencloud.com:20220/defaultdb?sslMode=REQUIRED}
+    username: ${AIVEN_DB_USERNAME:avnadmin}
+    password: ${AIVEN_DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+
+  # Flyway will still run using the same locations configured in application.yml
+
+server:
+  # Typically overridden via SERVER_PORT env var in production
+  port: ${SERVER_PORT:8080}

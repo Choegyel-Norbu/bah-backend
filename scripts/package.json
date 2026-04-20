@@ -1,0 +1,10 @@
+{
+  "name": "attirehub-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "UploadThing upload/delete scripts for AttireHub backend",
+  "dependencies": {
+    "uploadthing": "^7.4.0"
+  }
+}
