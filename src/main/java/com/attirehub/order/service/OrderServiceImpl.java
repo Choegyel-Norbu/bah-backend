@@ -14,10 +14,24 @@ import com.attirehub.order.entity.OrderItem;
 import com.attirehub.order.entity.OrderStatusHistory;
 import com.attirehub.notification.service.NotificationService;
 import com.attirehub.order.repository.OrderRepository;
+import com.attirehub.inventory.enums.StockChangeType;
+import com.attirehub.inventory.service.StockAuditService;
+import com.attirehub.partner.enums.PartnerStatus;
+import com.attirehub.partner.enums.PartnerType;
+import com.attirehub.partner.repository.PartnerRepository;
+import com.attirehub.payment.entity.PaymentRecord;
+import com.attirehub.payment.enums.PaymentRecordStatus;
+import com.attirehub.payment.repository.PaymentRecordRepository;
+import com.attirehub.payment.service.StripeCheckoutIntent;
+import com.attirehub.payment.service.StripePaymentService;
+import com.attirehub.product.entity.Product;
 import com.attirehub.product.entity.ProductVariant;
 import com.attirehub.product.repository.ProductVariantRepository;
 import com.attirehub.shared.dto.PagedResponse;
 import com.attirehub.shared.enums.OrderStatus;
+import com.attirehub.shared.enums.PaymentMethod;
+import com.attirehub.shared.enums.PaymentStatus;
+import com.attirehub.shared.enums.ReferralType;
 import com.attirehub.shared.exception.BadRequestException;
 import com.attirehub.shared.exception.ResourceNotFoundException;
 import com.attirehub.user.entity.Address;
@@ -34,9 +48,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Service
@@ -44,33 +61,62 @@ import java.util.concurrent.ThreadLocalRandom;
 public class OrderServiceImpl implements OrderService {
 
     private static final Logger log = LoggerFactory.getLogger(OrderServiceImpl.class);
+
+    /** PRD 3.4 — minimum order value */
+    private static final BigDecimal MIN_ORDER_TOTAL_BTN = new BigDecimal("500");
+    private static final int MAX_LINE_ITEMS = 20;
+    private static final int MAX_QTY_PER_LINE = 10;
+
     private final OrderRepository orderRepository;
     private final CartRepository cartRepository;
     private final UserRepository userRepository;
     private final AddressRepository addressRepository;
     private final ProductVariantRepository productVariantRepository;
     private final NotificationService notificationService;
+    private final PartnerRepository partnerRepository;
+    private final StripePaymentService stripePaymentService;
+    private final PaymentRecordRepository paymentRecordRepository;
+    private final StockAuditService stockAuditService;
 
     @Override
     @Transactional
     public OrderResponse placeOrder(Long userId, PlaceOrderRequest request) {
-        // 1. Get user's cart
         Cart cart = cartRepository.findByUserId(userId)
                 .orElseThrow(() -> new BadRequestException("Your cart is empty"));
 
         if (cart.getItems().isEmpty()) {
             throw new BadRequestException("Your cart is empty");
         }
+        if (cart.getItems().size() > MAX_LINE_ITEMS) {
+            throw new BadRequestException("Maximum " + MAX_LINE_ITEMS + " line items per order");
+        }
+        for (CartItem ci : cart.getItems()) {
+            if (ci.getQuantity() > MAX_QTY_PER_LINE) {
+                throw new BadRequestException("Maximum quantity per line item is " + MAX_QTY_PER_LINE);
+            }
+        }
 
-        // 2. Validate shipping address belongs to user
         Address shippingAddress = addressRepository.findByIdAndUserId(request.getShippingAddressId(), userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Address", "id", request.getShippingAddressId()));
 
-        // 3. Get user
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
 
-        // 4. Build order
+        PaymentMethod paymentMethod = request.getPaymentMethod() != null
+                ? request.getPaymentMethod()
+                : PaymentMethod.CASH_ON_DELIVERY;
+        boolean stripeCheckout = paymentMethod == PaymentMethod.STRIPE;
+
+        if (stripeCheckout) {
+            if (request.getExchangeRateUsed() == null
+                    || request.getExchangeRateUsed().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new BadRequestException("exchangeRateUsed is required for Stripe checkout (BTN per 1 charged currency unit)");
+            }
+            if (!stripePaymentService.isConfigured()) {
+                throw new BadRequestException("Stripe is not configured on the server");
+            }
+        }
+
         String orderNumber = generateOrderNumber();
         Order order = Order.builder()
                 .orderNumber(orderNumber)
@@ -78,14 +124,26 @@ public class OrderServiceImpl implements OrderService {
                 .shippingAddress(shippingAddress)
                 .couponCode(request.getCouponCode())
                 .notes(request.getNotes())
+                .paymentMethod(paymentMethod)
+                .paymentStatus(PaymentStatus.PENDING)
                 .build();
 
-        // 5. Process each cart item → order item + deduct stock
+        applyReferralAttribution(order, request.getReferralCode(), user);
+        if (stripeCheckout) {
+            order.setExchangeRateUsed(request.getExchangeRateUsed().setScale(6, RoundingMode.HALF_UP));
+            String ccy = request.getChargedCurrency() != null && !request.getChargedCurrency().isBlank()
+                    ? request.getChargedCurrency().trim().toLowerCase(Locale.ROOT)
+                    : "usd";
+            if (ccy.length() != 3) {
+                throw new BadRequestException("chargedCurrency must be a 3-letter ISO code");
+            }
+            order.setChargedCurrency(ccy);
+        }
+
         BigDecimal subtotal = BigDecimal.ZERO;
         for (CartItem cartItem : cart.getItems()) {
             ProductVariant variant = cartItem.getVariant();
 
-            // Validate stock availability
             if (variant.getStockQuantity() < cartItem.getQuantity()) {
                 throw new BadRequestException(
                         String.format("Insufficient stock for %s (%s/%s). Available: %d, Requested: %d",
@@ -93,11 +151,23 @@ public class OrderServiceImpl implements OrderService {
                                 variant.getStockQuantity(), cartItem.getQuantity()));
             }
 
-            // Deduct stock (optimistic locking via @Version)
-            variant.setStockQuantity(variant.getStockQuantity() - cartItem.getQuantity());
+            if (stripeCheckout) {
+                variant.setStockQuantity(variant.getStockQuantity() - cartItem.getQuantity());
+                variant.setReservedQuantity(variant.getReservedQuantity() + cartItem.getQuantity());
+            } else {
+                variant.setStockQuantity(variant.getStockQuantity() - cartItem.getQuantity());
+            }
             productVariantRepository.save(variant);
 
-            // Use variant discount from DB (flat amount) when creating order item totals.
+            stockAuditService.log(
+                    variant,
+                    stripeCheckout ? StockChangeType.CHECKOUT_RESERVE : StockChangeType.CHECKOUT_DEDUCT,
+                    -cartItem.getQuantity(),
+                    variant.getStockQuantity(),
+                    stripeCheckout ? variant.getReservedQuantity() : null,
+                    null,
+                    (stripeCheckout ? "Stripe reserve for " : "COD sale for ") + orderNumber);
+
             BigDecimal variantDiscount = variant.getDiscount() != null ? variant.getDiscount() : BigDecimal.ZERO;
             BigDecimal discountedUnitPrice = variant.getPrice().subtract(variantDiscount);
             if (discountedUnitPrice.compareTo(BigDecimal.ZERO) < 0) {
@@ -108,50 +178,92 @@ public class OrderServiceImpl implements OrderService {
                     .multiply(BigDecimal.valueOf(cartItem.getQuantity()))
                     .setScale(2, RoundingMode.HALF_UP);
 
+            Product product = variant.getProduct();
             OrderItem orderItem = OrderItem.builder()
                     .order(order)
                     .variant(variant)
-                    .productName(variant.getProduct().getName())
+                    .productName(product.getName())
                     .sku(variant.getSku())
                     .size(variant.getSize())
                     .color(variant.getColor())
                     .quantity(cartItem.getQuantity())
                     .unitPrice(discountedUnitPrice)
                     .totalPrice(itemTotal)
+                    .sourcingType(product.getSourcingType())
+                    .consignmentCommissionRate(product.getConsignmentCommissionRate())
                     .build();
 
             order.getItems().add(orderItem);
             subtotal = subtotal.add(itemTotal);
         }
 
-        // 6. Calculate totals
         order.setSubtotal(subtotal);
         order.setTotal(subtotal.subtract(order.getDiscount())
                 .add(order.getTax())
                 .add(order.getShippingCost()));
 
-        // 7. Add initial status history
-        OrderStatusHistory history = OrderStatusHistory.builder()
-                .order(order)
-                .status(OrderStatus.PENDING)
-                .notes("Order placed")
-                .changedBy(userId)
-                .build();
-        order.getStatusHistory().add(history);
+        if (order.getTotal().compareTo(MIN_ORDER_TOTAL_BTN) < 0) {
+            throw new BadRequestException("Minimum order value is BTN " + MIN_ORDER_TOTAL_BTN);
+        }
 
-        // 8. Save order
+        if (stripeCheckout) {
+            order.setStatus(OrderStatus.PENDING_PAYMENT);
+            order.getStatusHistory().add(OrderStatusHistory.builder()
+                    .order(order)
+                    .status(OrderStatus.PENDING_PAYMENT)
+                    .notes("Awaiting Stripe payment")
+                    .changedBy(userId)
+                    .build());
+        } else {
+            order.setStatus(OrderStatus.PENDING);
+            order.getStatusHistory().add(OrderStatusHistory.builder()
+                    .order(order)
+                    .status(OrderStatus.PENDING)
+                    .notes("Order placed")
+                    .changedBy(userId)
+                    .build());
+        }
+
         Order savedOrder = orderRepository.save(order);
 
-        // 9. Store notification for new order (notification module)
-        String totalMessage = "Total: " + savedOrder.getTotal();
-        notificationService.createForNewOrder(savedOrder.getId(), userId, orderNumber, totalMessage);
+        String stripeClientSecret = null;
+        if (stripeCheckout) {
+            BigDecimal chargedMajor = savedOrder.getTotal()
+                    .divide(request.getExchangeRateUsed(), 2, RoundingMode.HALF_UP);
+            if (chargedMajor.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new BadRequestException("Converted charge amount is invalid; check exchangeRateUsed");
+            }
+            StripeCheckoutIntent intent = stripePaymentService.createPaymentIntent(
+                    savedOrder.getOrderNumber(),
+                    chargedMajor,
+                    savedOrder.getChargedCurrency()
+            );
+            stripeClientSecret = intent.clientSecret();
 
-        // 10. Clear cart
+            PaymentRecord payment = PaymentRecord.builder()
+                    .order(savedOrder)
+                    .stripePaymentIntentId(intent.paymentIntentId())
+                    .status(PaymentRecordStatus.CREATED)
+                    .amountMinor(intent.amountMinor())
+                    .currency(intent.currency())
+                    .build();
+            paymentRecordRepository.save(payment);
+
+            savedOrder.setStripePaymentIntentId(intent.paymentIntentId());
+            orderRepository.save(savedOrder);
+        }
+
+        if (!stripeCheckout) {
+            String totalMessage = "Total: " + savedOrder.getTotal();
+            notificationService.createForNewOrder(savedOrder.getId(), userId, orderNumber, totalMessage);
+        }
+
         cart.getItems().clear();
         cartRepository.save(cart);
 
-        log.info("Order placed: orderNumber={}, userId={}, total={}", orderNumber, userId, order.getTotal());
-        return mapOrderToResponse(savedOrder, false);
+        log.info("Order placed: orderNumber={}, userId={}, paymentMethod={}, total={}",
+                orderNumber, userId, paymentMethod, order.getTotal());
+        return mapOrderToResponse(savedOrder, false, stripeClientSecret);
     }
 
     @Override
@@ -159,7 +271,7 @@ public class OrderServiceImpl implements OrderService {
     public OrderResponse getOrder(Long userId, String orderNumber) {
         Order order = orderRepository.findByOrderNumberAndUserId(orderNumber, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", "orderNumber", orderNumber));
-        return mapOrderToResponse(order, false);
+        return mapOrderToResponse(order, false, null);
     }
 
     @Override
@@ -171,7 +283,7 @@ public class OrderServiceImpl implements OrderService {
 
         List<OrderResponse> content = orderPage.getContent()
                 .stream()
-                .map(order -> mapOrderToResponse(order, false))
+                .map(order -> mapOrderToResponse(order, false, null))
                 .toList();
 
         return PagedResponse.<OrderResponse>builder()
@@ -190,15 +302,26 @@ public class OrderServiceImpl implements OrderService {
         Order order = orderRepository.findByOrderNumberAndUserId(orderNumber, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", "orderNumber", orderNumber));
 
-        if (order.getStatus() != OrderStatus.PENDING && order.getStatus() != OrderStatus.CONFIRMED) {
-            throw new BadRequestException("Order can only be cancelled when in PENDING or CONFIRMED status");
+        if (order.getStatus() != OrderStatus.PENDING
+                && order.getStatus() != OrderStatus.CONFIRMED
+                && order.getStatus() != OrderStatus.PENDING_PAYMENT) {
+            throw new BadRequestException("Order cannot be cancelled in its current status");
         }
 
-        // Restore stock
-        for (OrderItem item : order.getItems()) {
-            ProductVariant variant = item.getVariant();
-            variant.setStockQuantity(variant.getStockQuantity() + item.getQuantity());
-            productVariantRepository.save(variant);
+        if (order.getStatus() == OrderStatus.PENDING_PAYMENT) {
+            restoreReservedStock(order);
+            stripePaymentService.cancelPaymentIntentIfPresent(order.getStripePaymentIntentId());
+            paymentRecordRepository.findTopByOrder_IdOrderByIdDesc(order.getId()).ifPresent(pr -> {
+                pr.setStatus(PaymentRecordStatus.CANCELLED);
+                paymentRecordRepository.save(pr);
+            });
+            order.setPaymentStatus(PaymentStatus.FAILED);
+        } else {
+            for (OrderItem item : order.getItems()) {
+                ProductVariant variant = item.getVariant();
+                variant.setStockQuantity(variant.getStockQuantity() + item.getQuantity());
+                productVariantRepository.save(variant);
+            }
         }
 
         order.setStatus(OrderStatus.CANCELLED);
@@ -214,7 +337,7 @@ public class OrderServiceImpl implements OrderService {
         Order savedOrder = orderRepository.save(order);
         notificationService.createForOrderStatusUpdate(savedOrder.getUser().getId(), orderNumber, OrderStatus.CANCELLED, null);
         log.info("Order cancelled: orderNumber={}, userId={}", orderNumber, userId);
-        return mapOrderToResponse(savedOrder, false);
+        return mapOrderToResponse(savedOrder, false, null);
     }
 
     @Override
@@ -224,7 +347,7 @@ public class OrderServiceImpl implements OrderService {
                 ? orderRepository.findAllByStatusOrderByCreatedAtDesc(statusFilter, PageRequest.of(page, size))
                 : orderRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(page, size));
         List<OrderResponse> content = orderPage.getContent().stream()
-                .map(order -> mapOrderToResponse(order, true))
+                .map(order -> mapOrderToResponse(order, true, null))
                 .toList();
         return PagedResponse.<OrderResponse>builder()
                 .content(content)
@@ -242,6 +365,14 @@ public class OrderServiceImpl implements OrderService {
         Order order = orderRepository.findByOrderNumber(orderNumber)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", "orderNumber", orderNumber));
         order.setStatus(request.getStatus());
+
+        if (request.getTrackingNumber() != null && !request.getTrackingNumber().isBlank()) {
+            order.setTrackingNumber(request.getTrackingNumber().trim());
+        }
+        if (request.getStatus() == OrderStatus.DELIVERED && order.getDeliveredAt() == null) {
+            order.setDeliveredAt(LocalDateTime.now());
+        }
+
         OrderStatusHistory history = OrderStatusHistory.builder()
                 .order(order)
                 .status(request.getStatus())
@@ -252,16 +383,118 @@ public class OrderServiceImpl implements OrderService {
         Order saved = orderRepository.save(order);
         notificationService.createForOrderStatusUpdate(saved.getUser().getId(), orderNumber, request.getStatus(), request.getNotes());
         log.info("Order status updated: orderNumber={}, newStatus={}, adminUserId={}", orderNumber, request.getStatus(), adminUserId);
-        return mapOrderToResponse(saved, true);
+        return mapOrderToResponse(saved, true, null);
+    }
+
+    @Override
+    @Transactional
+    public void expireStalePendingPaymentOrders() {
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(30);
+        List<Order> stale = orderRepository.findByStatusAndCreatedAtBefore(OrderStatus.PENDING_PAYMENT, cutoff);
+        for (Order order : stale) {
+            restoreReservedStock(order);
+            stripePaymentService.cancelPaymentIntentIfPresent(order.getStripePaymentIntentId());
+            paymentRecordRepository.findTopByOrder_IdOrderByIdDesc(order.getId()).ifPresent(pr -> {
+                pr.setStatus(PaymentRecordStatus.CANCELLED);
+                paymentRecordRepository.save(pr);
+            });
+            order.setStatus(OrderStatus.CANCELLED);
+            order.setPaymentStatus(PaymentStatus.FAILED);
+            order.getStatusHistory().add(OrderStatusHistory.builder()
+                    .order(order)
+                    .status(OrderStatus.CANCELLED)
+                    .notes("Payment timeout (30 minutes)")
+                    .changedBy(null)
+                    .build());
+            orderRepository.save(order);
+            notificationService.createForOrderStatusUpdate(
+                    order.getUser().getId(), order.getOrderNumber(), OrderStatus.CANCELLED, "Payment timeout");
+            log.info("Expired pending-payment order: {}", order.getOrderNumber());
+        }
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public OrderResponse trackOrder(String orderNumber, String email) {
+        Order order = orderRepository.findByOrderNumber(orderNumber.trim())
+                .orElseThrow(() -> new ResourceNotFoundException("Order", "orderNumber", orderNumber));
+        if (!order.getUser().getEmail().equalsIgnoreCase(email.trim())) {
+            throw new BadRequestException("Email does not match this order");
+        }
+        return mapOrderToResponse(order, false, null);
+    }
+
+    @Override
+    @Transactional
+    public void autoCompleteDeliveredOrders() {
+        LocalDateTime deadline = LocalDateTime.now().minusDays(14);
+        List<Order> orders = orderRepository.findByStatusAndDeliveredAtBefore(OrderStatus.DELIVERED, deadline);
+        for (Order order : orders) {
+            order.setStatus(OrderStatus.COMPLETED);
+            order.getStatusHistory().add(OrderStatusHistory.builder()
+                    .order(order)
+                    .status(OrderStatus.COMPLETED)
+                    .notes("Auto-completed 14 days after delivery")
+                    .changedBy(null)
+                    .build());
+            orderRepository.save(order);
+            notificationService.createForOrderStatusUpdate(
+                    order.getUser().getId(), order.getOrderNumber(), OrderStatus.COMPLETED, null);
+            log.info("Auto-completed order after delivery window: {}", order.getOrderNumber());
+        }
+    }
+
+    private void applyReferralAttribution(Order order, String rawCode, User purchaser) {
+        order.setReferralType(ReferralType.NONE);
+        order.setReferralCode(null);
+        order.setReferralPartner(null);
+        order.setReferralPartnerDisplayName(null);
+        if (rawCode == null || rawCode.isBlank()) {
+            return;
+        }
+        String code = rawCode.trim();
+        partnerRepository.findByReferralCodeIgnoreCaseAndStatus(code, PartnerStatus.ACTIVE).ifPresent(partner -> {
+            if (partner.getEmail() != null && !partner.getEmail().isBlank()
+                    && purchaser.getEmail() != null
+                    && partner.getEmail().trim().equalsIgnoreCase(purchaser.getEmail().trim())) {
+                log.info("Self-referral blocked: partner {} matches purchaser email", partner.getReferralCode());
+                return;
+            }
+            order.setReferralType(partner.getPartnerType() == PartnerType.HOTEL
+                    ? ReferralType.HOTEL
+                    : ReferralType.GUIDE);
+            order.setReferralCode(partner.getReferralCode());
+            order.setReferralPartner(partner);
+            order.setReferralPartnerDisplayName(partner.getDisplayName());
+        });
+    }
+
+    private void restoreReservedStock(Order order) {
+        for (OrderItem item : order.getItems()) {
+            ProductVariant variant = item.getVariant();
+            variant.setStockQuantity(variant.getStockQuantity() + item.getQuantity());
+            variant.setReservedQuantity(variant.getReservedQuantity() - item.getQuantity());
+            if (variant.getReservedQuantity() < 0) {
+                variant.setReservedQuantity(0);
+            }
+            productVariantRepository.save(variant);
+        }
     }
 
     private String generateOrderNumber() {
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS"));
-        int random = ThreadLocalRandom.current().nextInt(100, 1000);
-        return String.format("ORD-%s-%03d", timestamp, random);
+        ZoneId zone = ZoneId.of("Asia/Thimphu");
+        String date = LocalDate.now(zone).format(DateTimeFormatter.BASIC_ISO_DATE);
+        for (int attempt = 0; attempt < 8; attempt++) {
+            int seq = ThreadLocalRandom.current().nextInt(1, 10_000);
+            String candidate = String.format("BAH-%s-%04d", date, seq);
+            if (!orderRepository.existsByOrderNumber(candidate)) {
+                return candidate;
+            }
+        }
+        throw new IllegalStateException("Could not allocate unique order number");
     }
 
-    private OrderResponse mapOrderToResponse(Order order, boolean includeCustomerDetails) {
+    private OrderResponse mapOrderToResponse(Order order, boolean includeCustomerDetails, String stripeClientSecret) {
         List<OrderItemResponse> itemResponses = order.getItems().stream()
                 .map(item -> {
                     var variant = item.getVariant();
@@ -334,6 +567,15 @@ public class OrderServiceImpl implements OrderService {
                 .paymentStatus(order.getPaymentStatus())
                 .couponCode(order.getCouponCode())
                 .notes(order.getNotes())
+                .referralType(order.getReferralType())
+                .referralCode(order.getReferralCode())
+                .referralPartnerDisplayName(order.getReferralPartnerDisplayName())
+                .exchangeRateUsed(order.getExchangeRateUsed())
+                .stripePaymentIntentId(order.getStripePaymentIntentId())
+                .chargedCurrency(order.getChargedCurrency())
+                .trackingNumber(order.getTrackingNumber())
+                .deliveredAt(order.getDeliveredAt())
+                .stripeClientSecret(stripeClientSecret)
                 .createdAt(order.getCreatedAt())
                 .items(itemResponses)
                 .customer(customer)

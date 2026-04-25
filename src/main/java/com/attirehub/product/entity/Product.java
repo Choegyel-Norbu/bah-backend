@@ -1,6 +1,8 @@
 package com.attirehub.product.entity;
 
 import com.attirehub.shared.entity.BaseEntity;
+import com.attirehub.shared.enums.ProductStatus;
+import com.attirehub.shared.enums.SourcingType;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -42,6 +44,25 @@ public class Product extends BaseEntity {
     @Column(length = 100)
     private String material;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "product_status", nullable = false, length = 20, columnDefinition = "varchar(20)")
+    @Builder.Default
+    private ProductStatus productStatus = ProductStatus.ACTIVE;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sourcing_type", nullable = false, length = 20, columnDefinition = "varchar(20)")
+    @Builder.Default
+    private SourcingType sourcingType = SourcingType.OWNED;
+
+    @Column(name = "cost_price_btn", precision = 10, scale = 2)
+    private BigDecimal costPriceBtn;
+
+    @Column(name = "consignment_commission_rate", precision = 7, scale = 4)
+    private BigDecimal consignmentCommissionRate;
+
+    @Column(name = "weight_grams")
+    private Integer weightGrams;
+
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private boolean isActive = true;
@@ -73,4 +94,13 @@ public class Product extends BaseEntity {
     @Builder.Default
     @OrderBy("id ASC")
     private Set<ProductVariantGroup> variantGroups = new LinkedHashSet<>();
+
+    @PrePersist
+    @PreUpdate
+    void syncActiveAndProductStatus() {
+        if (productStatus == null) {
+            productStatus = isActive ? ProductStatus.ACTIVE : ProductStatus.ARCHIVED;
+        }
+        isActive = (productStatus == ProductStatus.ACTIVE);
+    }
 }

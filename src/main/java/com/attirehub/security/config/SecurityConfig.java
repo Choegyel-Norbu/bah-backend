@@ -53,6 +53,12 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/products/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/categories/**").permitAll()
 
+                        .requestMatchers(HttpMethod.POST, "/api/v1/referrals/click").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/webhooks/stripe").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/order-return-requests").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/public/orders/track").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
+
                         // UploadThing: health is public, rest requires auth (role checked via @PreAuthorize)
                         .requestMatchers(HttpMethod.GET, "/api/v1/uploadthing/health").permitAll()
                         .requestMatchers("/api/v1/uploadthing/**").authenticated()

@@ -17,7 +17,7 @@ spring:
 
   # ==================== Datasource ====================
   datasource:
-    url: jdbc:mysql://localhost:3306/attirehub?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    url: jdbc:mysql://localhost:3306/bah?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
     username: root
     password: ChogyalWp
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -81,6 +81,13 @@ spring:
         debug: ${MAIL_DEBUG:false}
     test-connection: false
 
+# ==================== Actuator (PRD 07 health) ====================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
 # ==================== Server ====================
 # Use 8081 by default to avoid conflict when 8080 is in use; set SERVER_PORT=8080 to use 8080
 server:
@@ -102,6 +109,16 @@ app:
 
   # Password reset token validity (1 hour)
   password-reset-token-expiration-hours: 1
+
+  # Stripe (PRD international checkout). Leave secret empty in dev to disable card checkout.
+  stripe:
+    secret-key: ${STRIPE_SECRET_KEY:}
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+
+  order:
+    payment-timeout-check-ms: 60000
+    delivered-auto-complete-cron: "0 15 * * * *"
+    stripe-reconcile-cron: "0 */10 * * * *"
 
   # ==================== Cache (Redis) ====================
   cache:

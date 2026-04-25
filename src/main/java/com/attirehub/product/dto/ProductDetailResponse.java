@@ -1,5 +1,6 @@
 package com.attirehub.product.dto;
 
+import com.attirehub.shared.enums.SourcingType;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -25,6 +26,7 @@ public class ProductDetailResponse {
     private String categorySlug;
     private String brand;
     private String material;
+    private SourcingType sourcingType;
     private boolean isFeatured;
     private boolean isTrending;
     private boolean newArrival;

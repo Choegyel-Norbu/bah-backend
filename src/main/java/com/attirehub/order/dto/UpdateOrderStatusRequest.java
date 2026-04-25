@@ -17,4 +17,7 @@ public class UpdateOrderStatusRequest {
     private OrderStatus status;
 
     private String notes;
+
+    /** Shipping provider tracking number when moving to {@link OrderStatus#SHIPPED}. */
+    private String trackingNumber;
 }

@@ -1,6 +1,7 @@
 package com.attirehub.product.repository;
 
 import com.attirehub.product.entity.Product;
+import com.attirehub.shared.enums.ProductStatus;
 import jakarta.persistence.criteria.JoinType;
 import org.springframework.data.jpa.domain.Specification;
 
@@ -17,7 +18,7 @@ public final class ProductSpecification {
     private ProductSpecification() {}
 
     public static Specification<Product> isActive() {
-        return (root, query, cb) -> cb.isTrue(root.get("isActive"));
+        return (root, query, cb) -> cb.equal(root.get("productStatus"), ProductStatus.ACTIVE);
     }
 
     public static Specification<Product> hasCategory(String categorySlug) {

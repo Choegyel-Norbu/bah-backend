@@ -71,6 +71,14 @@ public class ProductVariant extends BaseEntity {
     @Builder.Default
     private int stockQuantity = 0;
 
+    /**
+     * Units held for {@link com.attirehub.shared.enums.OrderStatus#PENDING_PAYMENT} checkouts (PRD).
+     * Sellable quantity for cart = {@code stockQuantity}; reserved units are not available to other buyers.
+     */
+    @Column(name = "reserved_quantity", nullable = false)
+    @Builder.Default
+    private int reservedQuantity = 0;
+
     @OneToMany(mappedBy = "variant", cascade = jakarta.persistence.CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<VariantImage> images = new ArrayList<>();

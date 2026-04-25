@@ -1,5 +1,6 @@
 package com.attirehub.product.dto;
 
+import com.attirehub.shared.enums.SourcingType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import lombok.AllArgsConstructor;
@@ -38,6 +39,11 @@ public class CreateProductRequest {
 
     @Size(max = 100)
     private String material;
+
+    /**
+     * OWNED vs CONSIGNMENT. If omitted, defaults to OWNED.
+     */
+    private SourcingType sourcingType;
 
     @Builder.Default
     private boolean isActive = true;

@@ -21,4 +21,13 @@ public interface OrderService {
 
     /** Admin: update order status and record in history. */
     OrderResponse updateOrderStatus(Long adminUserId, String orderNumber, UpdateOrderStatusRequest request);
+
+    /** Scheduled: release stock for Stripe checkouts that never completed payment (PRD ~30 min). */
+    void expireStalePendingPaymentOrders();
+
+    /** Scheduled: DELIVERED → COMPLETED after cooling-off period (PRD: 14 days). */
+    void autoCompleteDeliveredOrders();
+
+    /** Public tracking (PRD CX-07): order number + email must match the order's customer. */
+    OrderResponse trackOrder(String orderNumber, String email);
 }

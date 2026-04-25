@@ -30,6 +30,8 @@ import com.attirehub.product.entity.VariantImage;
 import com.attirehub.shared.dto.PagedResponse;
 import com.attirehub.shared.exception.BadRequestException;
 import com.attirehub.shared.exception.DuplicateResourceException;
+import com.attirehub.shared.enums.ProductStatus;
+import com.attirehub.shared.enums.SourcingType;
 import com.attirehub.shared.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -93,6 +95,8 @@ public class ProductServiceImpl implements ProductService {
                 .category(category)
                 .brand(request.getBrand() != null ? request.getBrand().trim() : null)
                 .material(request.getMaterial() != null ? request.getMaterial().trim() : null)
+                .sourcingType(request.getSourcingType() != null ? request.getSourcingType() : SourcingType.OWNED)
+                .productStatus(request.isActive() ? ProductStatus.ACTIVE : ProductStatus.DRAFT)
                 .isActive(request.isActive())
                 .isFeatured(request.isFeatured())
                 .isNewArrival(request.isNewArrival())
@@ -177,7 +181,11 @@ public class ProductServiceImpl implements ProductService {
         if (request.getMaterial() != null) {
             product.setMaterial(request.getMaterial().trim().isEmpty() ? null : request.getMaterial().trim());
         }
+        if (request.getSourcingType() != null) {
+            product.setSourcingType(request.getSourcingType());
+        }
         if (request.getIsActive() != null) {
+            product.setProductStatus(request.getIsActive() ? ProductStatus.ACTIVE : ProductStatus.ARCHIVED);
             product.setActive(request.getIsActive());
         }
         if (request.getIsFeatured() != null) {

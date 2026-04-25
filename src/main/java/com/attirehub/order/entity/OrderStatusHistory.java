@@ -27,7 +27,7 @@ public class OrderStatusHistory {
     private Order order;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false, columnDefinition = "varchar(20)")
+    @Column(nullable = false, columnDefinition = "varchar(40)")
     private OrderStatus status;
 
     @Column(columnDefinition = "TEXT")

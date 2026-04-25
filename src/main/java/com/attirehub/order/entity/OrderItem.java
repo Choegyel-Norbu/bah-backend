@@ -2,7 +2,15 @@ package com.attirehub.order.entity;
 
 import com.attirehub.product.entity.ProductVariant;
 import com.attirehub.shared.entity.BaseEntity;
-import jakarta.persistence.*;
+import com.attirehub.shared.enums.SourcingType;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import lombok.*;
 
 import java.math.BigDecimal;
@@ -48,4 +56,12 @@ public class OrderItem extends BaseEntity {
 
     @Column(name = "total_price", nullable = false, precision = 10, scale = 2)
     private BigDecimal totalPrice;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "sourcing_type", nullable = false, length = 20, columnDefinition = "varchar(20)")
+    @Builder.Default
+    private SourcingType sourcingType = SourcingType.OWNED;
+
+    @Column(name = "consignment_commission_rate", precision = 7, scale = 4)
+    private BigDecimal consignmentCommissionRate;
 }

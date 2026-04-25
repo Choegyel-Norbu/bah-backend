@@ -3,11 +3,13 @@ package com.attirehub.product.controller;
 import com.attirehub.product.dto.CreateProductRequest;
 import com.attirehub.product.dto.CreateProductVariantRequest;
 import com.attirehub.product.dto.ProductDetailResponse;
+import com.attirehub.product.dto.ProductListResponse;
 import com.attirehub.product.dto.UpdateProductRequest;
 import com.attirehub.product.dto.UpdateProductVariantRequest;
 import com.attirehub.product.dto.VariantResponse;
 import com.attirehub.product.service.ProductService;
 import com.attirehub.shared.dto.ApiResponse;
+import com.attirehub.shared.dto.PagedResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -18,6 +20,8 @@ import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.math.BigDecimal;
+
 @RestController
 @RequestMapping("/api/v1/admin/products")
 @RequiredArgsConstructor
@@ -25,6 +29,27 @@ import org.springframework.web.multipart.MultipartFile;
 public class AdminProductController {
 
     private final ProductService productService;
+
+    @GetMapping
+    public ResponseEntity<ApiResponse<PagedResponse<ProductListResponse>>> getProducts(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String category,
+            @RequestParam(name = "size_filter", required = false) String sizeFilter,
+            @RequestParam(required = false) String color,
+            @RequestParam(required = false) BigDecimal minPrice,
+            @RequestParam(required = false) BigDecimal maxPrice,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) Boolean featured,
+            @RequestParam(required = false) Boolean trending,
+            @RequestParam(required = false) Boolean onSale,
+            @RequestParam(required = false) Boolean newArrivalsOnly) {
+        PagedResponse<ProductListResponse> products =
+                productService.getProducts(page, size, sort, category, sizeFilter, color,
+                        minPrice, maxPrice, search, featured, trending, onSale, newArrivalsOnly);
+        return ResponseEntity.ok(ApiResponse.success(products));
+    }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<ApiResponse<ProductDetailResponse>> createProduct(

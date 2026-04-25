@@ -1,5 +1,6 @@
 package com.attirehub.product.dto;
 
+import com.attirehub.shared.enums.SourcingType;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
@@ -37,6 +38,8 @@ public class UpdateProductRequest {
 
     @Size(max = 100)
     private String material;
+
+    private SourcingType sourcingType;
 
     @JsonProperty("active")
     private Boolean isActive;
